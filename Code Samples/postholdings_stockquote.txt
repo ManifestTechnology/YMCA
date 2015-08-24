@@ -1,0 +1,70 @@
+/**
+ * Implements hook_theme().
+ */
+function postholdings_general_theme(){
+  return array(
+    'stock-quote-page' => array(
+      'template' => 'templates/page-stock-quote',
+      'variables' => array(
+        'view' => NULL,
+      ),
+    ),
+    'stock-chart-page' => array(
+      'template' => 'templates/page-stock-chart',
+      'variables' => array(),
+    ),
+  );
+}
+
+/**
+ * get the stock quote historical data
+ */
+function postholdings_general_historical_stock_quote_data(){
+  $output = '';
+
+  // use custom caching
+  $bin = 'cache_block';
+  $cid = __FUNCTION__;
+  
+  if($cache = cache_get($cid, $bin)){
+    $output = $cache->data;
+  } else {
+    $var = array();
+    $query = 'SELECT DATE_FORMAT(d.field_stock_quote_date_value, :short_date) AS `date`, t.field_trade_value AS `price`, v.field_volume_value AS `volume` FROM {field_data_field_stock_quote_date} d JOIN {field_data_field_trade} t ON t.entity_id = d.entity_id JOIN {field_data_field_volume} v ON v.entity_id = d.entity_id WHERE DATE_FORMAT(d.field_stock_quote_date_value, :format_date) != DATE_FORMAT(CURRENT_DATE(), :format_date) GROUP BY DATE_FORMAT(d.field_stock_quote_date_value, :short_date) ORDER BY d.field_stock_quote_date_value ASC';
+    $results = db_query($query, array(':short_date' => '%m/%d/%Y', ':format_date' => '%Y-%m-%d'))->fetchAll();
+
+    foreach($results as $record){
+      $var[] = array(
+        'date' => $record->date,
+        'value' => $record->price,
+        'volume' => $record->volume,
+      );
+    }
+    
+    // we are encoding the json ourselves and not using drupal_json_encode
+    // so that the slashes in the date don't get escaped
+    $output = drupal_json_encode($var);
+    $output = str_replace('\/', '/', $output);
+    cache_set($cid, $output, $bin, time() + (60 * 10));
+  }
+  return $output;
+}
+
+/**
+ * Page callback for the Stock Quote
+ */
+function postholdings_general_stock_chart_page(){
+  $path = drupal_get_path('theme', 'postholdings') . '/js/feeds/';
+  drupal_add_js($path . 'vendor/amcharts.js', array('scope' => 'footer'));
+  drupal_add_js($path . 'vendor/serial.js', array('scope' => 'footer'));
+  drupal_add_js($path . 'vendor/amstock.js', array('scope' => 'footer'));
+  drupal_add_js($path . 'stockchart.js', array('scope' => 'footer'));
+  
+  $historical = postholdings_general_historical_stock_quote_data();
+  $intraday = postholdings_general_intraday_stock_quote_data();
+
+  drupal_add_js(array('postholdings_general' => array('historical_stock_quotes' => $historical)), array('type' => 'setting'));
+  drupal_add_js(array('postholdings_general' => array('intraday_stock_quotes' => $intraday)), array('type' => 'setting'));
+  drupal_set_title('Financial Information - Stock Chart');
+  return theme('stock-chart-page');
+}
